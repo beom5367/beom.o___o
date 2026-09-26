@@ -1,0 +1,58 @@
+project: 예제
+circuits:
+  - name: RC필터
+    components:
+      - V1 in 0 PULSE(0 5 0 1n 1n 5m 10m)
+      - R1 in out 1k
+      - C1 out 0 1u
+    analysis: .tran 0 10m 0 1u
+    measure:
+      - TRAN vout_max MAX V(out) FROM 0 TO 5m
+      - TRAN vout_1ms FIND V(out) AT 1m
+      - TRAN t_rise TRIG V(out) VAL=0.5 RISE=1 TARG V(out) VAL=4.5 RISE=1
+      - TRAN i_r1_avg AVG I(R1) FROM 0 TO 5m
+
+  - name: 분압기
+    params: {Rload: 10k}
+    components:
+      - V1 vin 0 12
+      - R1 vin out 10k
+      - R2 out 0 10k
+      - RL out 0 {Rload}
+    analysis: .op
+    sweep: {param: Rload, values: [1k, 5k, 10k, 50k, 100k]}
+    measure:
+      - OP vout FIND V(out)
+      - OP iload FIND I(RL)
+
+  - name: CE증폭기
+    components:
+      - VCC vcc 0 12
+      - VIN src 0 AC 1
+      - RC1 vcc c 4.7k
+      - RB1 vcc b 47k
+      - RB2 b 0 10k
+      - RE1 e 0 1k
+      - CE1 e 0 100u
+      - CIN src b 10u
+      - COUT c out 10u
+      - RL1 out 0 10k
+      - Q1 c b e 2N3904
+    directives:
+      - .model 2N3904 NPN(IS=1E-14 VAF=100 BF=300 IKF=0.4 XTB=1.5 BR=4 CJC=4E-12 CJE=8E-12 RB=20 RC=0.1 RE=0.1 TR=250E-9 TF=350E-12 ITF=1 VTF=2 XTF=3)
+    analysis: .ac dec 20 10 10Meg
+    measure:
+      - AC gain_1k FIND mag(V(out)) AT 1k
+      - AC gain_max MAX mag(V(out))
+
+  - name: 반전증폭기
+    components:
+      - V1 in 0 SINE(0 0.1 1k)
+      - R1 in n 1k
+      - R2 n out 10k
+      - U1 n 0 out
+    analysis: .tran 0 3m 0 1u
+    measure:
+      - TRAN vout_pp PP V(out) FROM 1m TO 3m
+      - TRAN vin_pp PP V(in) FROM 1m TO 3m
+      - TRAN gain PARAM vout_pp/vin_pp
