@@ -1,0 +1,79 @@
+project: Lab2
+circuits:
+  - name: Fig1_반파정류
+    components:
+      - {ref: V1, nodes: [a, 0], value: SINE(0 10 60), dir: down, at: [0, 2]}
+      - {ref: D1, nodes: [a, vout], value: 1N4004, dir: right, at: [3, 0]}
+      - {ref: R1, nodes: [vout, 0], value: 1k, dir: down, at: [8, 2]}
+    wires:
+      - [[0, 2], [0, 0], [3, 0]]
+      - [[5, 0], [8, 0], [8, 2]]
+      - [[0, 5], [0, 7], [8, 7], [8, 5]]
+    gnd: [8, 7]
+    sim_only:
+      - .model 1N4004 D(Is=3.699n Rs=41.4m N=1.96 Cjo=39.8p M=.333 tt=4.32u)
+    analysis: .tran 0.5
+    measure:
+      - TRAN vpeak MAX V(vout) FROM 0.4 TO 0.5
+      - TRAN vavg AVG V(vout) FROM 0.4 TO 0.5
+      - TRAN vrms RMS V(vout) FROM 0.4 TO 0.5
+
+  - name: Fig2_전파정류
+    components:
+      - {ref: V1, nodes: [tr, bl], value: SINE(0 10 60), dir: down, at: [0, 5]}
+      - {ref: D1, nodes: [0, tr], value: 1N4004, dir: right, at: [14, 4]}
+      - {ref: D2, nodes: [tr, vout], value: 1N4004, dir: down, at: [18, 6]}
+      - {ref: D3, nodes: [0, bl], value: 1N4004, dir: down, at: [12, 6]}
+      - {ref: D4, nodes: [bl, vout], value: 1N4004, dir: right, at: [14, 10]}
+      - {ref: R1, nodes: [vout, 0], value: 1k, dir: down, at: [24, 11]}
+    wires:
+      - [[0, 5], [0, 1], [18, 1], [18, 4]]
+      - [[12, 4], [14, 4]]
+      - [[16, 4], [18, 4], [18, 6]]
+      - [[12, 4], [12, 6]]
+      - [[12, 8], [12, 10], [14, 10]]
+      - [[18, 8], [18, 10]]
+      - [[16, 10], [18, 10], [24, 10], [24, 11]]
+      - [[0, 8], [0, 10], [12, 10]]
+      - [[12, 4], [10, 4], [10, 14], [24, 14]]
+    gnd: [24, 14]
+    sim_only:
+      - .model 1N4004 D(Is=3.699n Rs=41.4m N=1.96 Cjo=39.8p M=.333 tt=4.32u)
+    analysis: .tran 0.5
+    measure:
+      - TRAN vpeak MAX V(vout) FROM 0.4 TO 0.5
+      - TRAN vavg AVG V(vout) FROM 0.4 TO 0.5
+      - TRAN vrms RMS V(vout) FROM 0.4 TO 0.5
+
+  - name: Fig3_전파정류_RC필터
+    params: {RL: 1k}
+    components:
+      - {ref: V1, nodes: [tr, bl], value: SINE(0 10 60), dir: down, at: [0, 5]}
+      - {ref: D1, nodes: [0, tr], value: 1N4004, dir: right, at: [14, 4]}
+      - {ref: D2, nodes: [tr, vout], value: 1N4004, dir: down, at: [18, 6]}
+      - {ref: D3, nodes: [0, bl], value: 1N4004, dir: down, at: [12, 6]}
+      - {ref: D4, nodes: [bl, vout], value: 1N4004, dir: right, at: [14, 10]}
+      - {ref: C1, nodes: [vout, 0], value: 10u, dir: down, at: [21, 11], keep: true}
+      - {ref: R1, nodes: [vout, 0], value: "{RL}", dir: down, at: [24, 11]}
+    wires:
+      - [[0, 5], [0, 1], [18, 1], [18, 4]]
+      - [[12, 4], [14, 4]]
+      - [[16, 4], [18, 4], [18, 6]]
+      - [[12, 4], [12, 6]]
+      - [[12, 8], [12, 10], [14, 10]]
+      - [[18, 8], [18, 10]]
+      - [[16, 10], [18, 10], [21, 10], [24, 10], [24, 11]]
+      - [[21, 10], [21, 11]]
+      - [[0, 8], [0, 10], [12, 10]]
+      - [[12, 4], [10, 4], [10, 14], [21, 14], [24, 14]]
+      - [[21, 13], [21, 14]]
+    gnd: [24, 14]
+    sim_only:
+      - .model 1N4004 D(Is=3.699n Rs=41.4m N=1.96 Cjo=39.8p M=.333 tt=4.32u)
+    analysis: .tran 0.5
+    sweep: {param: RL, values: [100, 1k, 3.3k, 5.6k]}
+    measure:
+      - TRAN vdc AVG V(vout) FROM 0.4 TO 0.5
+      - TRAN vripple PP V(vout) FROM 0.4 TO 0.5
+      - TRAN vmax MAX V(vout) FROM 0.4 TO 0.5
+      - TRAN vmin MIN V(vout) FROM 0.4 TO 0.5

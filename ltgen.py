@@ -291,11 +291,6 @@ def label_geometry(c: Comp, okey, rot, org, body):
             ax, ay = ax + org[0], ay + org[1]
             w = text_w(s)
             rects.append((ax - w / 2, ay - 22, ax + w / 2, ay) if ay <= cy else (ax - w / 2, ay, ax + w / 2, ay + 22))
-    elif sym["kind"] == "source" and okey == "D":
-        for n, ((wx, wy), s) in enumerate(zip(sym["win"], texts)):
-            windows.append(f"WINDOW {0 if n == 0 else 3} {-wx} {wy} Right 2")
-            ax, ay = -wx + org[0], wy + org[1]
-            rects.append((ax - text_w(s), ay - 11, ax, ay + 11))
     else:
         for (wx, wy), s in zip(sym["win"], texts):
             ax, ay = transform((wx, wy), rot)
@@ -309,7 +304,7 @@ def label_geometry(c: Comp, okey, rot, org, body):
 # 배치 (담금질 기법)
 # ---------------------------------------------------------------------------
 W_LEN, W_BEND, W_OBS, W_CROSS, W_OVER = 1.0, 2.0, 10.0, 4.0, 12.0
-W_GND, W_SUP, W_AREA, W_LAB, W_UP, W_LEFT, W_SRC = 1.5, 1.0, 0.35, 4.0, 5.0, 1.5, 1.5
+W_GND, W_SUP, W_AREA, W_LAB, W_UP, W_LEFT, W_SRC = 1.5, 1.0, 0.35, 4.0, 5.0, 1.5, 4.0
 SHIFTS = [(1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2), (4, 0), (-4, 0), (0, 4), (0, -4),
           (1, 1), (-1, -1), (1, -1), (-1, 1)]
 OFFS = [(0, 0), (64, 0), (-64, 0), (0, 64), (0, -64), (96, 0), (-96, 0), (0, 96), (0, -96),
@@ -535,7 +530,7 @@ class Placer:
         for e, c in enumerate(self.comps):
             if c.at is not None:
                 t0 = self.fps[e][self.orients[e][0]].terms[0]
-                st[e] = (int(c.at[0]) - t0[0] // U, int(c.at[1]) - t0[1] // U, self.orients[e][0])
+                st[e] = (round(c.at[0]) - t0[0] // U, round(c.at[1]) - t0[1] // U, self.orients[e][0])
                 placed.append(e)
         for e in self.bfs_order():
             if st[e] is not None:
@@ -696,7 +691,7 @@ def line_cells(a, b):
 class Router:
     BEND, CROSS = 4, 12
 
-    def __init__(self, comps, geo, label_nets):
+    def __init__(self, comps, geo, label_nets, user_wires=()):
         self.comps, self.geo, self.label_nets = comps, geo, label_nets
         self.blocked = set()
         self.soft = defaultdict(float)
@@ -754,6 +749,34 @@ class Router:
             for k, t in enumerate(g["terms"]):
                 self.mark_vertex(t, comps[e].nodes[k])
                 self.cells[comps[e].nodes[k]].add(t)
+        self.add_user_wires(user_wires)
+
+    def add_user_wires(self, polys):
+        pending = [list(p) for p in polys]
+        while pending:
+            done = []
+            for poly in pending:
+                cells = set()
+                for a, b in zip(poly, poly[1:]):
+                    cells.update(line_cells(a, b))
+                nets = {self.vert[c] for c in cells if c in self.vert}
+                for p in (poly[0], poly[-1]):
+                    nets |= set(self.wire.get(p, {}))
+                if len(nets) > 1:
+                    raise ValueError(f"wires {poly} 가 여러 넷 {sorted(nets)} 에 닿습니다")
+                if nets:
+                    n = nets.pop()
+                    for a, b in zip(poly, poly[1:]):
+                        self.add_line(n, a, b)
+                    for p in poly:
+                        self.mark_vertex(p, n)
+                    done.append(poly)
+            if not done:
+                raise ValueError(f"wires {pending[0]} 가 어떤 소자에도 닿지 않습니다")
+            pending = [p for p in pending if p not in done]
+        for c, w in self.wire.items():
+            if len(w) > 1:
+                self.cross.add(c)
 
     def mark_vertex(self, c, n):
         if self.vert.get(c, n) != n:
@@ -893,15 +916,21 @@ class Router:
                 s += 1
         return s
 
-    def place_flags(self, named):
+    def place_flags(self, named, gnd=None):
         for e, c in enumerate(self.comps):
             for k, n in enumerate(c.nodes):
                 if (n in self.label_nets or n in self.failed) and (self.geo[e]["terms"][k], n) not in self.flags:
                     self.flags.append((self.geo[e]["terms"][k], n))
         if GND not in self.label_nets and GND not in self.failed and self.cells[GND]:
             cand = [c for c in self.cells[GND] if c not in self.cross]
-            c = max(cand, key=lambda c: (c[1], -c[0]))
+            c = gnd if gnd in cand else max(cand, key=lambda c: (c[1], -c[0]))
             self.mark_vertex(c, GND)
+            drop = [(c[0], c[1] + 16), (c[0], c[1] + 32)]
+            if all(q not in self.blocked and q not in self.wire and q not in self.vert and
+                   self.soft.get(q, 0) < 3 for q in drop):
+                self.add_line(GND, c, drop[-1])
+                c = drop[-1]
+                self.mark_vertex(c, GND)
             self.flags.append((c, GND))
         for n in named:
             if n == GND or n in self.label_nets or n in self.failed or not self.cells[n]:
@@ -996,19 +1025,22 @@ def _anneal_job(args):
     return cost, st
 
 
-def layout_circuit(comps, label_nets, named, supply=frozenset(), restarts=4, effort=1.0):
+def layout_circuit(comps, label_nets, named, supply=frozenset(), restarts=4, effort=1.0, user_wires=(), gnd=None):
     nets = {n for c in comps for n in c.nodes}
     n = len(comps)
-    iters = int(effort * (2000 * n + 4000) * max(1.0, n / 12))
-    jobs = [(comps, label_nets, supply, seed, iters) for seed in range(restarts)]
-    try:
-        from concurrent.futures import ProcessPoolExecutor
-        with ProcessPoolExecutor(max_workers=min(restarts, os.cpu_count() or 1)) as ex:
-            results = list(ex.map(_anneal_job, jobs))
-    except Exception:
-        results = [_anneal_job(j) for j in jobs]
-    results.sort(key=lambda r: r[0])
     pl = Placer(comps, label_nets, 0, supply)
+    if all(c.at is not None for c in comps):
+        results = [(0.0, pl.initial())]
+    else:
+        iters = int(effort * (2000 * n + 4000) * max(1.0, n / 12))
+        jobs = [(comps, label_nets, supply, seed, iters) for seed in range(restarts)]
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=min(restarts, os.cpu_count() or 1)) as ex:
+                results = list(ex.map(_anneal_job, jobs))
+        except Exception:
+            results = [_anneal_job(j) for j in jobs]
+        results.sort(key=lambda r: r[0])
     best = None
     for cost, st in results[:3]:
         if cost == INF:
@@ -1023,7 +1055,7 @@ def layout_circuit(comps, label_nets, named, supply=frozenset(), restarts=4, eff
             rng.shuffle(o2)
             tries.append(o2)
         for o in tries:
-            r = Router(comps, geo, label_nets)
+            r = Router(comps, geo, label_nets, user_wires)
             r.route(o)
             sc = r.score() / 2 + cost
             if best is None or sc < best[0]:
@@ -1033,7 +1065,7 @@ def layout_circuit(comps, label_nets, named, supply=frozenset(), restarts=4, eff
     if best is None:
         raise RuntimeError("배치에 실패했습니다")
     _, r, geo = best
-    r.place_flags(named)
+    r.place_flags(named, gnd)
     return r, geo
 
 
@@ -1046,7 +1078,12 @@ def schematic_text(circ, comps, directives, supply=frozenset(), effort=1.0):
     for n in as_list(circ.get("show")):
         if norm_net(n) in nets and norm_net(n) not in named:
             named.append(norm_net(n))
-    r, geo = layout_circuit(comps, label_nets, named, supply, effort=float(circ.get("effort", effort)))
+    user_wires = [[(int(round(float(x) * U)), int(round(float(y) * U))) for x, y in poly]
+                  for poly in circ.get("wires") or []]
+    gnd = circ.get("gnd")
+    gnd = (int(round(float(gnd[0]) * U)), int(round(float(gnd[1]) * U))) if gnd else None
+    r, geo = layout_circuit(comps, label_nets, named, supply, effort=float(circ.get("effort", effort)),
+                            user_wires=user_wires, gnd=gnd)
 
     wires = []
     for n in list(r.edges):
@@ -1178,6 +1215,7 @@ def eng(v: str) -> float:
 
 
 def build_directives(circ: dict, override: dict | None = None, for_asc=False, uses_opamp=False) -> list[str]:
+    """for_asc=False 이면 시뮬레이션 전용(sim_only) 줄도 포함"""
     lines = []
     params = dict(circ.get("params") or {})
     sweep = circ.get("sweep")
@@ -1193,6 +1231,8 @@ def build_directives(circ: dict, override: dict | None = None, for_asc=False, us
     if uses_opamp and not any(re.match(r"\.subckt\s+opamp\b", d, re.I) for d in user):
         lines.append(".lib opamp.sub")
     lines += user
+    if not for_asc:
+        lines += [str(d) for d in circ.get("sim_only") or []]
     for a in as_list(circ.get("analysis")):
         lines.append(a if a.startswith(".") else "." + a)
     for m in circ.get("measure") or []:
@@ -1437,6 +1477,11 @@ def presim(circ, comps, work: Path):
     flipped = []
     for c in comps:
         if signs.get(c.ref) == -1:
+            if c.dir:
+                t = make_fp(c, c.dir).terms
+                if c.at is not None:
+                    c.at = (c.at[0] + (t[1][0] - t[0][0]) / U, c.at[1] + (t[1][1] - t[0][1]) / U)
+                c.dir = {"D": "U", "U": "D", "R": "L", "L": "R"}[c.dir]
             c.nodes.reverse()
             flipped.append(c.ref)
 
