@@ -1,0 +1,25 @@
+# NPN 공통 이미터 증폭기 - AC 해석 (주파수 응답)
+name: ce_amp
+title: Common-emitter amplifier (2N3904)
+
+components:
+  - {ref: VCC, type: voltage, nodes: [vcc, 0],   value: 12}
+  - {ref: VIN, type: voltage, nodes: [src, 0],   value: "AC 1"}
+  - {ref: RC1, type: res,     nodes: [vcc, c],   value: 4.7k}
+  - {ref: RB1, type: res,     nodes: [vcc, b],   value: 47k}
+  - {ref: RB2, type: res,     nodes: [b, 0],     value: 10k}
+  - {ref: RE1, type: res,     nodes: [e, 0],     value: 1k}
+  - {ref: CE1, type: cap,     nodes: [e, 0],     value: 100u}
+  - {ref: CIN, type: cap,     nodes: [src, b],   value: 10u}
+  - {ref: COUT, type: cap,    nodes: [c, out],   value: 10u}
+  - {ref: RL1, type: res,     nodes: [out, 0],   value: 10k}
+  - {ref: Q1,  type: npn,     nodes: [c, b, e],  value: 2N3904}
+
+directives:
+  - .model 2N3904 NPN(IS=1E-14 VAF=100 BF=300 IKF=0.4 XTB=1.5 BR=4 CJC=4E-12 CJE=8E-12 RB=20 RC=0.1 RE=0.1 TR=250E-9 TF=350E-12 ITF=1 VTF=2 XTF=3)
+
+analysis: .ac dec 20 10 10Meg
+
+measure:
+  - AC gain_1k FIND mag(V(out)) AT 1k
+  - AC gain_max MAX mag(V(out))
